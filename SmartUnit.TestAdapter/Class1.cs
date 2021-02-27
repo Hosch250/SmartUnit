@@ -10,14 +10,21 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace SmartUnit.TestAdapter
 {
     [FileExtension(".dll")]
     [FileExtension(".exe")]
-    [DefaultExecutorUri(TestExecutor.ExecutorUri)]
-    public class TestDiscoverer : ITestDiscoverer
+    [DefaultExecutorUri(ExecutorUri)]
+    [ExtensionUri(ExecutorUri)]
+    [Category("managed")]
+    public class TestRunner : ITestDiscoverer, ITestExecutor
     {
+        public const string ExecutorUri = "executor://SmartUnitExecutor";
+
+        private CancellationTokenSource cancellationToken = new CancellationTokenSource();
+
         public void DiscoverTests(IEnumerable<string> sources, IDiscoveryContext discoveryContext, IMessageLogger logger, ITestCaseDiscoverySink discoverySink)
         {
             foreach (var source in sources)
@@ -26,36 +33,30 @@ namespace SmartUnit.TestAdapter
                 logger.SendMessage(TestMessageLevel.Informational, $"Discovered source '{source}'");
 
                 var assembly = Assembly.LoadFrom(sourceAssemblyPath);
+                var tests = assembly.GetTypes()
+                    .SelectMany(s => s.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
+                    .Where(w => w.GetCustomAttribute<AssertionAttribute>() is not null)
+                    .ToList();
 
-                var tests = assembly.GetTypes().SelectMany(s => s.GetMethods().Where(w => w.GetCustomAttribute<AssertionAttribute>() != null));
                 foreach (var test in tests)
                 {
+                    var assertionAttribute = test.GetCustomAttribute<AssertionAttribute>()!;
                     logger.SendMessage(TestMessageLevel.Informational, $"Discovered test '{test.DeclaringType.FullName + "." + test.Name}'");
 
-                    discoverySink.SendTestCase(new TestCase()
+                    discoverySink.SendTestCase(new TestCase(test.DeclaringType.FullName + "." + test.Name, new Uri(ExecutorUri), source)
                     {
-                        FullyQualifiedName = test.DeclaringType.FullName + "." + test.Name,
-                        DisplayName = test.Name,
-                        Source = source
+                        DisplayName = string.IsNullOrEmpty(assertionAttribute.Name) ? test.Name : assertionAttribute.Name
                     });
                 }
             }
         }
-    }
-
-    [ExtensionUri(ExecutorUri)]
-    public class TestExecutor : ITestExecutor
-    {
-        public const string ExecutorUri = "executor://SmartUnitExecutor";
-
-        private CancellationTokenSource cancellationToken;
 
         public void Cancel()
         {
             cancellationToken.Cancel();
         }
 
-        public void RunTests(IEnumerable<TestCase> tests, IRunContext runContext, IFrameworkHandle frameworkHandle)
+        public async void RunTests(IEnumerable<TestCase> tests, IRunContext runContext, IFrameworkHandle frameworkHandle)
         {
             foreach (var testCase in tests)
             {
@@ -77,7 +78,14 @@ namespace SmartUnit.TestAdapter
 
                 try
                 {
-                    RunTest(testMethod);
+                    if (testMethod.Name.StartsWith('<'))
+                    {
+                        await RunNestedTest(testMethod);
+                    }
+                    else
+                    {
+                        await RunTest(testMethod);
+                    }
                     frameworkHandle.RecordEnd(testCase, TestOutcome.Passed);
                 }
                 catch
@@ -87,7 +95,7 @@ namespace SmartUnit.TestAdapter
             }
         }
 
-        public void RunTests(IEnumerable<string> sources, IRunContext runContext, IFrameworkHandle frameworkHandle)
+        public async void RunTests(IEnumerable<string> sources, IRunContext runContext, IFrameworkHandle frameworkHandle)
         {
             foreach (var source in sources)
             {
@@ -99,7 +107,10 @@ namespace SmartUnit.TestAdapter
                 var sourceAssemblyPath = Path.IsPathRooted(source) ? source : Path.Combine(Directory.GetCurrentDirectory(), source);
                 var assembly = Assembly.LoadFrom(sourceAssemblyPath);
 
-                var tests = assembly.GetTypes().SelectMany(s => s.GetMethods().Where(w => w.GetCustomAttribute<AssertionAttribute>() != null));
+                var tests = assembly.GetTypes()
+                    .SelectMany(s => s.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
+                    .Where(w => w.GetCustomAttribute<AssertionAttribute>() is not null)
+                    .ToList();
                 foreach (var test in tests)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -118,7 +129,14 @@ namespace SmartUnit.TestAdapter
 
                     try
                     {
-                        RunTest(test);
+                        if (test.Name.StartsWith('<'))
+                        {
+                            await RunNestedTest(test);
+                        }
+                        else
+                        {
+                            await RunTest(test);
+                        }
                         frameworkHandle.RecordEnd(testCase, TestOutcome.Passed);
                     }
                     catch
@@ -129,39 +147,76 @@ namespace SmartUnit.TestAdapter
             }
         }
 
-        private void RunTest(MethodInfo test)
+        private async ValueTask RunTest(MethodInfo test)
         {
-            var typeInstance = Activator.CreateInstance(test.DeclaringType);
-
-            if (!test.GetParameters().Any())
+            var assertionSetAttribute = test.DeclaringType.GetCustomAttribute<AssertionSetAttribute>();
+            if (test.GetCustomAttribute<AssertionSetAttribute>() is not null)
             {
-                test.Invoke(typeInstance, null);
+                assertionSetAttribute = test.GetCustomAttribute<AssertionSetAttribute>();
+            }
+
+            if (assertionSetAttribute is null)
+            {
+                if (test.DeclaringType.IsAbstract && test.DeclaringType.IsSealed)
+                {
+                    await InvokeTest(test, null, null);
+                }
+                else
+                {
+                    await InvokeTest(test, Activator.CreateInstance(test.DeclaringType), null);
+                }
+
+                return;
+            }
+
+            var assertionSetInstance = Activator.CreateInstance(assertionSetAttribute.AssertionSetType) as AssertionSet;
+            assertionSetInstance!.Configure();
+            assertionSetInstance.AddSingleton(test.DeclaringType);
+
+            var provider = assertionSetInstance.BuildServiceProvider();
+            var parameters = test.GetParameters().Select(s =>
+            {
+                var service = provider.GetService(s.ParameterType);
+                if (service != null)
+                {
+                    return service;
+                }
+
+                if (s.ParameterType.IsInterface)
+                {
+                    var mock = (Mock)Activator.CreateInstance(typeof(Mock<>).MakeGenericType(s.ParameterType))!;
+                    return mock.Object;
+                }
+
+                return null;
+            }).ToArray();
+
+            var typeInstance = provider.GetRequiredService(test.DeclaringType);
+            await InvokeTest(test, typeInstance, parameters);
+        }
+
+        private async ValueTask RunNestedTest(MethodInfo test)
+        {
+            var parentMethodName = test.Name.Split('>')[0].Substring(1);
+            var parentMethod = test.DeclaringType.GetMethod(parentMethodName);
+
+            var callback = Delegate.CreateDelegate(typeof(Action), test);
+
+
+
+            await InvokeTest(parentMethod, Activator.CreateInstance(test.DeclaringType), new object[1] { callback });
+        }
+
+        private async ValueTask InvokeTest(MethodInfo methodInfo, object? typeInstance, object?[]? parameters)
+        {
+            var isAwaitable = methodInfo.ReturnType.GetMethod(nameof(Task.GetAwaiter)) != null;
+            if (isAwaitable)
+            {
+                await (dynamic)methodInfo.Invoke(typeInstance, parameters)!;
             }
             else
             {
-                var assertionSetAttribute = test.DeclaringType.GetCustomAttribute<AssertionSetAttribute>();
-                var assertionSetInstance = Activator.CreateInstance(assertionSetAttribute.AssertionSetType) as AssertionSet;
-                assertionSetInstance.Configure();
-
-                var provider = assertionSetInstance.BuildServiceProvider();
-
-                var parameters = test.GetParameters().Select(s =>
-                {
-                    var service = provider.GetService(s.ParameterType);
-                    if (service != null)
-                    {
-                        return service;
-                    }
-
-                    if (s.ParameterType.IsInterface)
-                    {
-                        var mock = (Mock)Activator.CreateInstance(typeof(Mock<>).MakeGenericType(s.ParameterType));
-                        return mock.Object;
-                    }
-
-                    return null;
-                }).ToArray();
-                test.Invoke(typeInstance, parameters);
+                methodInfo.Invoke(typeInstance, parameters);
             }
         }
     }

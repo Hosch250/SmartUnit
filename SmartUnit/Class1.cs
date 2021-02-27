@@ -7,9 +7,10 @@ namespace SmartUnit
     [AttributeUsage(AttributeTargets.Method)]
     public class AssertionAttribute : Attribute
     {
+        public string? Name { get; set; }
     }
 
-    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = false)]
     public class AssertionSetAttribute : Attribute
     {
         public Type AssertionSetType { get; }
@@ -18,7 +19,7 @@ namespace SmartUnit
         {
             if (assertionSetType.BaseType != typeof(AssertionSet))
             {
-                throw new ArgumentException(nameof(assertionSetType));
+                throw new ArgumentException(null, nameof(assertionSetType));
             }
 
             AssertionSetType = assertionSetType;
@@ -34,7 +35,7 @@ namespace SmartUnit
 
     public static class AssertExtensions
     {
-        public static object AssertThat(this object obj, Func<object, bool> assertion)
+        public static T AssertThat<T>(this T obj, Func<T, bool> assertion)
         {
             if (assertion(obj))
             {
@@ -44,7 +45,7 @@ namespace SmartUnit
             throw new AssertionException();
         }
 
-        public static async Task<object> AssertThatAsync(this object obj, Func<object, Task<bool>> assertion)
+        public static async Task<T> AssertThatAsync<T>(this T obj, Func<T, Task<bool>> assertion)
         {
             if (await assertion(obj))
             {
@@ -53,7 +54,8 @@ namespace SmartUnit
 
             throw new AssertionException();
         }
-        public static object AssertException<TException>(this object obj, Func<object, bool> assertion) where TException : Exception
+
+        public static T AssertException<T, TException>(this T obj, Action<T> assertion) where TException : Exception
         {
             try
             {
@@ -66,7 +68,7 @@ namespace SmartUnit
             }
         }
 
-        public static async Task<object> AssertThatAsync<TException>(this object obj, Func<object, Task<bool>> assertion) where TException : Exception
+        public static async Task<T> AssertThatExceptionAsync<T, TException>(this T obj, Func<T, Task> assertion) where TException : Exception
         {
             try
             {
