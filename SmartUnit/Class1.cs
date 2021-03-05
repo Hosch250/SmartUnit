@@ -26,41 +26,53 @@ namespace SmartUnit
         }
     }
 
+    [AttributeUsage(AttributeTargets.Parameter)]
+    public class CallbackAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public class SkipAttribute : Attribute
+    {
+        public string? Reason { get; set; }
+    }
+
     public abstract class AssertionSet : ServiceCollection
     {
         public abstract void Configure();
     }
 
-    internal class AssertionException : Exception { }
+    internal class AssertionException : Exception
+    {
+        internal AssertionException(string? message) : base(message) { }
+    }
 
     public static class AssertExtensions
     {
-        public static T AssertThat<T>(this T obj, Func<T, bool> assertion)
+        public static T AssertThat<T>(this T obj, Func<T, bool> assertion, string? failureMessage = null)
         {
             if (assertion(obj))
             {
                 return obj;
             }
 
-            throw new AssertionException();
+            throw new AssertionException(failureMessage);
         }
 
-        public static async Task<T> AssertThatAsync<T>(this T obj, Func<T, Task<bool>> assertion)
+        public static async Task<T> AssertThatAsync<T>(this T obj, Func<T, Task<bool>> assertion, string? failureMessage = null)
         {
             if (await assertion(obj))
             {
                 return obj;
             }
 
-            throw new AssertionException();
+            throw new AssertionException(failureMessage);
         }
 
-        public static T AssertException<T, TException>(this T obj, Action<T> assertion) where TException : Exception
+        public static T AssertException<T, TException>(this T obj, Action<T> assertion, string? failureMessage = null) where TException : Exception
         {
             try
             {
                 assertion(obj);
-                throw new AssertionException();
+                throw new AssertionException(failureMessage);
             }
             catch (TException)
             {
@@ -68,12 +80,12 @@ namespace SmartUnit
             }
         }
 
-        public static async Task<T> AssertThatExceptionAsync<T, TException>(this T obj, Func<T, Task> assertion) where TException : Exception
+        public static async Task<T> AssertThatExceptionAsync<T, TException>(this T obj, Func<T, Task> assertion, string? failureMessage = null) where TException : Exception
         {
             try
             {
                 await assertion(obj);
-                throw new AssertionException();
+                throw new AssertionException(failureMessage);
             }
             catch (TException)
             {
