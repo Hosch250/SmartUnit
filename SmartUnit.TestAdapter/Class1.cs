@@ -80,10 +80,15 @@ namespace SmartUnit.TestAdapter
                 foreach (var test in tests)
                 {
                     var testDisplayName = test.Name;
-                    if (test.Name.StartsWith('<'))
+                    if (test.Name.StartsWith('<') && !test.Name.StartsWith("<<Main>$>"))
                     {
                         var parentTestName = test.Name.Split('>')[0][1..];
                         testDisplayName = parentTestName + '.' + test.Name.Split('>')[1][3..].Split('|')[0];
+                    }
+                    if (test.Name.StartsWith("<<Main>$>"))
+                    {
+                        var parentTestName = test.Name.Split('>')[0][2..];
+                        testDisplayName = parentTestName + '.' + test.Name.Split('>')[2][3..].Split('|')[0];
                     }
 
                     var assertionAttribute = test.GetCustomAttribute<AssertionAttribute>()!;
@@ -170,7 +175,7 @@ namespace SmartUnit.TestAdapter
 
             try
             {
-                if (testMethod.Name.StartsWith('<'))
+                if (testMethod.Name.StartsWith('<') && !testMethod.Name.StartsWith("<<Main>$>"))
                 {
                     await RunNestedTest(testMethod);
                 }
