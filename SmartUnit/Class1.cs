@@ -72,25 +72,27 @@ namespace SmartUnit
             try
             {
                 assertion(obj);
-                throw new AssertionException(failureMessage);
             }
             catch (TException)
             {
                 return obj;
             }
+
+            throw new AssertionException(failureMessage);
         }
 
-        public static async Task<T> AssertThatExceptionAsync<T, TException>(this T obj, Func<T, Task> assertion, string? failureMessage = null) where TException : Exception
+        public static async Task<T> AssertExceptionAsync<T, TException>(this T obj, Func<T, Task> assertion, string? failureMessage = null) where TException : Exception
         {
             try
             {
                 await assertion(obj);
-                throw new AssertionException(failureMessage);
             }
             catch (TException)
             {
                 return obj;
             }
+
+            throw new AssertionException(failureMessage);
         }
     }
 }

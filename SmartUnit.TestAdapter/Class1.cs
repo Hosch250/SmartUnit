@@ -92,7 +92,7 @@ namespace SmartUnit.TestAdapter
                     }
 
                     var assertionAttribute = test.GetCustomAttribute<AssertionAttribute>()!;
-                    var testCase = new TestCase(test.DeclaringType.FullName + "." + test.Name, new Uri(ExecutorUri), source)
+                    var testCase = new TestCase(test.DeclaringType!.FullName + "." + test.Name, new Uri(ExecutorUri), source)
                     {
                         DisplayName = string.IsNullOrEmpty(assertionAttribute.Name) ? testDisplayName : assertionAttribute.Name,
                     };
@@ -197,14 +197,14 @@ namespace SmartUnit.TestAdapter
         private async ValueTask RunNestedTest(MethodInfo test)
         {
             var parentMethodName = test.Name.Split('>')[0].Substring(1);
-            var parentMethod = test.DeclaringType.GetMethod(parentMethodName);
+            var parentMethod = test.DeclaringType!.GetMethod(parentMethodName);
 
             await RunTest(parentMethod, test);
         }
 
         private async ValueTask RunTest(MethodInfo test, MethodInfo? callback = null)
         {
-            var assertionSetAttribute = test.DeclaringType.GetCustomAttribute<AssertionSetAttribute>();
+            var assertionSetAttribute = test.DeclaringType!.GetCustomAttribute<AssertionSetAttribute>();
             if (test.GetCustomAttribute<AssertionSetAttribute>() is not null)
             {
                 assertionSetAttribute = test.GetCustomAttribute<AssertionSetAttribute>();
@@ -238,7 +238,7 @@ namespace SmartUnit.TestAdapter
                 return null;
             }).ToArray();
 
-            var typeInstance = test.DeclaringType.IsAbstract && test.DeclaringType.IsSealed ? null : Activator.CreateInstance(test.DeclaringType);
+            var typeInstance = test.DeclaringType!.IsAbstract && test.DeclaringType.IsSealed ? null : Activator.CreateInstance(test.DeclaringType);
             if (test.DeclaringType.IsAbstract && test.DeclaringType.IsSealed)
             {
                 await InvokeTest(test, typeInstance, parameters);
@@ -253,7 +253,7 @@ namespace SmartUnit.TestAdapter
         {
             var assertionSetInstance = Activator.CreateInstance(assertionSetType) as AssertionSet;
             assertionSetInstance!.Configure();
-            assertionSetInstance.AddSingleton(test.DeclaringType);
+            assertionSetInstance.AddSingleton(test.DeclaringType!);
 
             var provider = assertionSetInstance.BuildServiceProvider();
             var parameters = test.GetParameters().Select(s =>
@@ -278,7 +278,7 @@ namespace SmartUnit.TestAdapter
                 return null;
             }).ToArray();
 
-            var typeInstance = test.DeclaringType.IsAbstract && test.DeclaringType.IsSealed ? null : provider.GetRequiredService(test.DeclaringType);
+            var typeInstance = test.DeclaringType!.IsAbstract && test.DeclaringType.IsSealed ? null : provider.GetRequiredService(test.DeclaringType);
             await InvokeTest(test, typeInstance, parameters);
         }
 
